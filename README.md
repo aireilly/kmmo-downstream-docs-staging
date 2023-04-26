@@ -2,10 +2,10 @@
 
 Use this Ansible playbook to pull upstream KMMO docs from [kernel-module-management/docs](https://github.com/rh-ecosystem-edge/kernel-module-management/tree/main/docs) and convert the markdown source to AsciiDoc using [Kramdoc](https://github.com/asciidoctor/kramdown-asciidoc).
 
-Install the tools: 
+Install the tools:
 
 ```cmd
-sudo dnf install ansible
+pip install ansible
 pip install ansible-lint
 gem install kramdown-asciidoc
 ```
@@ -16,7 +16,7 @@ Fork this repo, clone it locally, and change to the `/kmmo-downstream-docs-stagi
 cd ~/kmmo-downstream-docs-staging
 ```
 
-Create a Python virtual env (venv): 
+Create a Python virtual env (venv):
 
 ```cmd
 python3 -m venv venv
