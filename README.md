@@ -16,13 +16,6 @@ Fork this repo, clone it locally, and change to the `/kmmo-downstream-docs-stagi
 cd ~/kmmo-downstream-docs-staging
 ```
 
-Create a Python virtual env (venv): 
-
-```cmd
-python3 -m venv venv
-source venv/bin/activate
-```
-
 Run the conversion:
 
 ```cmd
