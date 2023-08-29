@@ -52,7 +52,62 @@ and / or signing job as required;
  .. successful build jobs;
  .. successful signing jobs.
 
-== Example resource
+=== Soft dependencies between kernel modules
+
+Some setups may require that several kernel modules be loaded in a specific order to work properly, although the modules
+do not directly depend on each other through symbols.
+`depmod` is usually not aware of those dependencies, and they do not appear in the files it produces. +
+If `mod_a` has a soft dependency on `mod_b`, `modprobe mod_a` will not load `mod_b`.
+
+Soft dependencies can be declared in the `Module` CRD via the
+`.spec.moduleLoader.container.modprobe.modulesLoadingOrder` field:
+
+[,yaml]
+----
+modulesLoadingOrder:  # optional
+  - mod_a
+  - mod_b
+----
+
+With the configuration above:
+
+* the loading order will be `mod_b`, then `mod_a`;
+* the unloading order will be `mod_a`, then `mod_b`.
+
+The first value in the list, to be loaded last, must be equivalent to the `moduleName`.
+
+=== Replacing an in-tree module
+
+Some modules loaded by KMM may replace in-tree modules already loaded on the node. +
+To unload an in-tree module before loading your module, set the `.spec.moduleLoader.container.inTreeModuleToRemove`:
+
+[,yaml]
+----
+spec:
+  moduleLoader:
+    container:
+      modprobe:
+        moduleName: mod_a
+        # ...
+
+      # Other fields removed for brevity
+      inTreeModuleToRemove: mod_b
+----
+
+The ModuleLoader pod will first try to unload the in-tree `mod_b` before loading `mod_a` from the ModuleLoader image. +
+When the ModuleLoader pod is terminated and `mod_a` is unloaded, `mod_b` will not be loaded again.
+
+=== Image pull policy
+
+Many examples in this documentation use the kernel version as image tag for the ModuleLoader image name. +
+If that image tag is being overridden on the registry, the Kubernetes
+https://kubernetes.io/docs/concepts/containers/images/#imagepullpolicy-defaulting[default image pull policy] that KMM
+honors can lead to nodes not pulling the latest version of an image. +
+Use `.spec.moduleLoader.container.imagePullPolicy` to configure the right
+https://kubernetes.io/docs/concepts/containers/images/#updating-images[image pull policy] for your ModuleLoader
+DaemonSets.
+
+=== Example resource
 
 Below is an annotated `Module` example with most options set.
 More information about specific features is available in the dedicated pages:
@@ -80,19 +135,29 @@ spec:
         parameters:  # Optional
           - param=1
 
+        modulesLoadingOrder:  # optional
+          - my-kmod
+          - my_dep_a
+          - my_dep_b
+
+      imagePullPolicy: Always  # optional
+
+      inTreeModuleToRemove: my-kmod-intree  # optional
+
       kernelMappings:  # At least one item is required
-        - literal: 6.0.15-300.fc37.x86_64
-          containerImage: some.registry/org/my-kmod:6.0.15-300.fc37.x86_64
+        - literal: 5.14.0-70.58.1.el9_0.x86_64
+          containerImage: some.registry/org/my-kmod:5.14.0-70.58.1.el9_0.x86_64
 
         # For each node running a kernel matching the regexp below,
         # KMM will create a DaemonSet running the image specified in containerImage
         # with ${KERNEL_FULL_VERSION} replaced with the kernel version.
-        - regexp: '^.+\fc37\.x86_64$'
+        - regexp: '^.+\el9\.x86_64$'
           containerImage: "some.other.registry/org/my-kmod:${KERNEL_FULL_VERSION}"
 
         # For any other kernel, build the image using the Dockerfile in the my-kmod ConfigMap.
         - regexp: '^.+$'
           containerImage: "some.registry/org/my-kmod:${KERNEL_FULL_VERSION}"
+          inTreeModuleToRemove: my-other-kmod-intree  # optional
           build:
             buildArgs:  # Optional
               - name: ARG_NAME
@@ -123,6 +188,8 @@ spec:
             # the container image already exists.
             insecureSkipTLSVerify: false
 
+    serviceAccountName: sa-module-loader  # Optional
+
   devicePlugin:  # Optional
     container:
       image: some.registry/org/device-plugin:latest  # Required if the devicePlugin section is present
@@ -140,7 +207,7 @@ spec:
         configMap:
           name: some-configmap
 
-    serviceAccountName: sa-device-plugin  # Optional; created automatically if not set
+    serviceAccountName: sa-device-plugin  # Optional
 
   imageRepoSecret:  # Optional. Used to pull ModuleLoader and device plugin images
     name: secret-name
@@ -148,3 +215,77 @@ spec:
   selector:
     node-role.kubernetes.io/worker: ""
 ----
+
+==== Variable substitution
+
+The following `Module` fields support shell-like variable substitution:
+
+* `.spec.moduleLoader.container.containerImage`;
+* `.spec.moduleLoader.container.kernelMappings[*].containerImage`;
+* `.spec.moduleLoader.container.sign.filesToSign`;
+* `.spec.moduleLoader.container.kernelMappings[*].sign.filesToSign`;
+
+The following variables will be substituted:
+
+|===
+| Name | Description | Example
+
+| `KERNEL_FULL_VERSION`
+| The kernel version we are building for
+| `5.14.0-70.58.1.el9_0.x86_64`
+
+| `KERNEL_VERSION` (deprecated)
+| The kernel version we are building for
+| `5.14.0-70.58.1.el9_0.x86_64`
+
+| `MOD_NAME`
+| The ``Module``'s name
+| `my-mod`
+
+| `MOD_NAMESPACE`
+| The ``Module``'s namespace
+| `my-namespace`
+|===
+
+== Security and permissions
+
+Loading kernel modules is a highly sensitive operation.
+Once loaded, kernel modules have all possible permissions to do any kind of operation on the node.
+
+=== `ServiceAccounts` and `SecurityContextConstraints`
+
+https://docs.openshift.com/container-platform/4.12/authentication/understanding-and-managing-pod-security-admission.html[Pod Security admission] and `SecurityContextConstraints` (SCCs) restrict privileged workload in most namespaces by default;
+namespaces that are part of the https://docs.openshift.com/container-platform/4.12/authentication/understanding-and-managing-pod-security-admission.html#security-context-constraints-psa-opting_understanding-and-managing-pod-security-admission[cluster payload]
+are an exception to that rule.
+In namespaces where Pod Security admission and SCC synchronization are enabled, the KMM workload needs to be manually
+allowed through RBAC.
+This is done by configuring a ServiceAccount that is allowed to use the `privileged` SCC in the `Module`.
+The authorization model depends on the ``Module``'s namespace, as well as its spec:
+
+* if the `.spec.moduleLoader.serviceAccountName` or `.spec.devicePlugin.serviceAccountName` fields are set, they are
+always used;
+* if those fields are not set, then:
+ ** if the `Module` is created in the operator's namespace (`openshift-kmm` by default), then KMM will use its
+default, powerful `ServiceAccounts` to run the DaemonSets;
+ ** if the `Module` is created in any other namespace, then KMM will run the DaemonSets as the namespace's `default`
+`ServiceAccount`, which cannot run privileged workload unless you manually allow it to use the `privileged` SCC.
+
+!!! warning "``openshift-kmm`` and some other namespaces that are part of the https://docs.openshift.com/container-platform/4.12/authentication/understanding-and-managing-pod-security-admission.html#security-context-constraints-psa-opting_understanding-and-managing-pod-security-admission[cluster payload] are considered trusted namespaces"
+
+ When setting up RBAC permissions, keep in mind that any user or ServiceAccount creating a `Module` resource in the
+ `openshift-kmm` namespace will result in KMM automatically running privileged workload on potentially all nodes in
+ cluster.
+
+To allow any `ServiceAccount` to use the `privileged` SCC and hence to run ModuleLoader and / or device plugin pods,
+use the following command:
+
+[,shell]
+----
+oc adm policy add-scc-to-user privileged -z "${serviceAccountName}" [ -n "${namespace}" ]
+----
+
+=== Pod Security standards
+
+OpenShift runs a https://docs.openshift.com/container-platform/4.12/authentication/understanding-and-managing-pod-security-admission.html[synchronization mechanism]
+that sets the namespace's Pod Security level automatically based on the security contexts in use.
+No action is needed.
