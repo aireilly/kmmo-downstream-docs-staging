@@ -1,7 +1,9 @@
 ---
 site_name: Kernel Module Management
-repo_url: https://github.com/kubernetes-sigs/kernel-module-management
-edit_uri: edit/main/docs/
+repo_url: https://github.com/rh-ecosystem-edge/kernel-module-management
+edit_uri: edit/main/docs/mkdocs
+site_description: Kernel Module Management (KMM) is a operator that manages, builds, signs and deploys out-of-tree kernel modules and device plugins on OpenShift clusters.
+site_url: https://openshift-kmm.netlify.app/
 
 docs_dir: mkdocs
 strict: true
@@ -15,7 +17,12 @@ nav:
       - Binary firmwares: documentation/firmwares.md
       - Secure boot: documentation/secure_boot.md
       - Preflight validation: documentation/preflight_validation.md
+      - Ordered upgrade: documentation/ordered_upgrade.md
+      - documentation/hub_spoke.md
+      - Day1 support: documentation/day1_limited_option.md
+      - documentation/troubleshooting.md
       - documentation/uninstall.md
+  - Lab: lab.md
   - Developer:
       - developer/index.md
       - developer/use_cases.md
@@ -29,3 +36,8 @@ plugins:
 
 markdown_extensions:
   - admonition
+
+
+theme:
+  name: mkdocs
+  custom_dir: overrides/
